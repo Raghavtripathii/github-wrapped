@@ -1,12 +1,103 @@
+/* Reset */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+/* Design Tokens */
+:root {
+  --bg-base:    #0a0a0f;  
+  --bg-surface: #111118;  
+  --bg-raised:  #1a1a24;  
+
+  --border:       rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.16);
+
+  --text-primary:   #f0f0f8;  
+  --text-secondary: #9090a8;  
+  --text-muted:     #5a5a72;  
+
+  --purple:       #7c6af7;
+  --purple-light: #a78bfa;
+  --green:        #22d3a0;
+  --orange:       #f59e0b;
+  --pink:         #f472b6;
+
+  --font-display: 'Syne', sans-serif;
+  --font-mono:    'Space Mono', monospace;
+}
+
+/* Global Base */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background: #0a0a0f;
-  color: #f0f0f8;
-  font-family: 'Syne', sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.6;
   min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Component Resets */
+button {
+  cursor: pointer;
+  font-family: var(--font-display);
+  background: none;
+  border: none;
+  color: inherit;
+}
+
+input, textarea {
+  font-family: var(--font-mono);
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+code, pre {
+  font-family: var(--font-mono);
+}
+
+/* Custom Scrollbar (Webkit) */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-raised);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2a38;
+}
+
+/* Utility Classes */
+.gradient-text {
+  background: linear-gradient(135deg, var(--text-primary) 20%, var(--purple) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Responsive Overrides */
+@media (max-width: 480px) {
+  .repo-grid {
+    grid-template-columns: 1fr !important;
+  }
 }
