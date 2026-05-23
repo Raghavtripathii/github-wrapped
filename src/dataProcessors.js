@@ -1,7 +1,7 @@
 // dataProcessors.js
 // Handles core data transformation and metrics computation from raw GitHub API responses.
 
-// 1. Language Breakdown 
+// 1. Language Breakdown
 export function getLanguageBreakdown(repos) {
   const languageSizes = {}
 
