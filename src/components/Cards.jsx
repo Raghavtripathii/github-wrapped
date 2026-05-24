@@ -6,7 +6,7 @@ const LANGUAGE_COLORS = {
   JavaScript: '#f7df1e',
   TypeScript: '#3178c6',
   Python:     '#3572a5',
-  Go:         '00add8',
+  Go:         '#00add8',
   Rust:       '#ce4a00',
   Java:       '#b07219',
   CSS:        '#563d7c',
