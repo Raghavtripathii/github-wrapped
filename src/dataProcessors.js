@@ -1,5 +1,18 @@
-// dataProcessors.js
-// Handles core data transformation and metrics computation from raw GitHub API responses.
+// Core data transformation and metrics computation from raw GitHub API responses.
+
+const CONTRIBUTION_EVENT_TYPES = new Set([
+  'PushEvent',
+  'PullRequestEvent',
+  'PullRequestReviewEvent',
+  'PullRequestReviewCommentEvent',
+  'IssuesEvent',
+  'IssueCommentEvent',
+  'CommitCommentEvent',
+])
+
+function isContributionEvent(event) {
+  return CONTRIBUTION_EVENT_TYPES.has(event.type)
+}
 
 // 1. Language Breakdown
 export function getLanguageBreakdown(repos) {
@@ -24,18 +37,24 @@ export function getLanguageBreakdown(repos) {
       name,
       percent: Math.round((size / totalSize) * 100),
     }))
-    .sort((a, b) => b.percent - a.percent) // Sort by highest percentage descending
-    .slice(0, 6) // Cap output to top 6 dominant languages
+    .sort((a, b) => b.percent - a.percent)
+    .slice(0, 6)
 }
 
-// 2. Top Repositories 
+// 2. Top Repositories
 export function getTopRepos(repos) {
-  return [...repos]
-    .sort(
-      (a, b) =>
-        b.stargazers_count + b.forks_count - (a.stargazers_count + a.forks_count)
-    )
-    .slice(0, 4) // Extract top 4 repositories based on engagement metrics
+  const ownedAndActive = repos.filter((repo) => !repo.fork && !repo.archived)
+  const pool = ownedAndActive.length > 0 ? ownedAndActive : repos
+
+  return [...pool]
+    .sort((a, b) => {
+      const scoreA = a.stargazers_count + a.forks_count
+      const scoreB = b.stargazers_count + b.forks_count
+
+      if (scoreB !== scoreA) return scoreB - scoreA
+      return new Date(b.pushed_at) - new Date(a.pushed_at)
+    })
+    .slice(0, 4)
     .map((repo) => ({
       name: repo.name,
       description: repo.description || '',
@@ -46,18 +65,17 @@ export function getTopRepos(repos) {
     }))
 }
 
-//  3. Commit Streaks 
+// 3. Commit Streaks
 export function getCommitStreaks(events) {
-  const daysWithCommits = new Set()
+  const activeDays = new Set()
 
-  // Filter for unique calendar dates containing PushEvents
   events.forEach((event) => {
-    if (event.type !== 'PushEvent') return
+    if (!isContributionEvent(event)) return
     const date = new Date(event.created_at).toISOString().split('T')[0]
-    daysWithCommits.add(date)
+    activeDays.add(date)
   })
 
-  const sortedDays = [...daysWithCommits].sort()
+  const sortedDays = [...activeDays].sort()
 
   if (sortedDays.length === 0) {
     return { currentStreak: 0, longestStreak: 0, totalActiveDays: 0 }
@@ -66,7 +84,6 @@ export function getCommitStreaks(events) {
   let longestStreak = 1
   let tempStreak = 1
 
-  // Compute consecutive day intervals
   for (let i = 1; i < sortedDays.length; i++) {
     const yesterday = new Date(sortedDays[i - 1])
     const today = new Date(sortedDays[i])
@@ -80,20 +97,22 @@ export function getCommitStreaks(events) {
     }
   }
 
-  // Validate if the current streak is still active (committed today or yesterday)
-  const lastCommitDay = new Date(sortedDays[sortedDays.length - 1])
-  const today = new Date()
-  const daysSinceLastCommit = (today - lastCommitDay) / (1000 * 60 * 60 * 24)
-  const currentStreak = daysSinceLastCommit <= 1 ? tempStreak : 0
+  // Compare calendar dates, not raw timestamps, so time-of-day doesn't
+  // affect whether the last active day counts as "today or yesterday".
+  const todayKey = new Date().toISOString().split('T')[0]
+  const lastActiveKey = sortedDays[sortedDays.length - 1]
+  const daysSinceLastActive =
+    (new Date(todayKey) - new Date(lastActiveKey)) / (1000 * 60 * 60 * 24)
+  const currentStreak = daysSinceLastActive <= 1 ? tempStreak : 0
 
   return {
     currentStreak,
     longestStreak,
-    totalActiveDays: daysWithCommits.size,
+    totalActiveDays: activeDays.size,
   }
 }
 
-//  4. Developer Personality 
+// 4. Developer Personality
 export function getDeveloperPersonality(events) {
   const hourCounts = new Array(24).fill(0)
   const dayCounts = new Array(7).fill(0) // 0 = Sunday, 6 = Saturday
@@ -116,14 +135,12 @@ export function getDeveloperPersonality(events) {
     }
   }
 
-  // Segment metrics based on specific working hours and patterns
   const midnightTo6am = hourCounts.slice(0, 6).reduce((a, b) => a + b, 0)
   const lateNight = hourCounts.slice(22).reduce((a, b) => a + b, 0) + hourCounts[0] + hourCounts[1]
   const weekendCommits = (dayCounts[0] + dayCounts[6]) / totalPushEvents
   const afternoonCommits = hourCounts.slice(13, 18).reduce((a, b) => a + b, 0) / totalPushEvents
   const morningCommits = hourCounts.slice(6, 10).reduce((a, b) => a + b, 0) / totalPushEvents
 
-  // Behavioral profile heuristics evaluation order
   if (lateNight / totalPushEvents > 0.3) {
     return {
       type: 'Night Owl',
@@ -168,18 +185,19 @@ export function getDeveloperPersonality(events) {
   }
 }
 
-//  5. Contribution Heatmap Data 
+// 5. Contribution Heatmap Data
 export function getHeatmapData(events) {
-  const commitsByDate = {}
+  const contributionsByDate = {}
 
   events.forEach((event) => {
-    if (event.type !== 'PushEvent') return
+    if (!isContributionEvent(event)) return
     const date = new Date(event.created_at).toISOString().split('T')[0]
-    const commitsInThisPush = event.payload?.commits?.length || 1
-    commitsByDate[date] = (commitsByDate[date] || 0) + commitsInThisPush
+    const weight = event.type === 'PushEvent'
+      ? (event.payload?.commits?.length || 1)
+      : 1
+    contributionsByDate[date] = (contributionsByDate[date] || 0) + weight
   })
 
-  // Generate a continuous 52-week grid layout backwards from current point
   const weeks = []
   const startDate = new Date()
   startDate.setDate(startDate.getDate() - 52 * 7)
@@ -192,7 +210,7 @@ export function getHeatmapData(events) {
       const dateKey = date.toISOString().split('T')[0]
       days.push({
         date: dateKey,
-        count: commitsByDate[dateKey] || 0,
+        count: contributionsByDate[dateKey] || 0,
       })
     }
     weeks.push(days)
@@ -201,7 +219,7 @@ export function getHeatmapData(events) {
   return weeks
 }
 
-//  6. Summary Stats 
+// 6. Summary Stats
 export function getSummaryStats(userInfo, repos) {
   return {
     totalStars: repos.reduce((sum, repo) => sum + repo.stargazers_count, 0),
