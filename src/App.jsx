@@ -7,8 +7,10 @@ import {
   getLanguageBreakdown,
   getTopRepos,
   getCommitStreaks,
+  getCommitStreaksFromCalendar,
   getDeveloperPersonality,
   getHeatmapData,
+  getHeatmapFromCalendar,
   getSummaryStats,
 } from './dataProcessors.js'
 
@@ -65,11 +67,13 @@ function LoadingScreen() {
 // Landing view managing user input submission and basic search queries
 function SearchScreen({ onSearch, error }) {
   const [inputValue, setInputValue] = useState('')
+  const [tokenValue, setTokenValue] = useState('')
+  const [showTokenField, setShowTokenField] = useState(false)
 
   function handleSubmit(e) {
     e.preventDefault()
     const username = inputValue.trim()
-    if (username) onSearch(username)
+    if (username) onSearch(username, tokenValue.trim() || undefined)
   }
 
   const demoUsers = ['torvalds', 'sindresorhus', 'gaearon', 'yyx990803']
@@ -189,6 +193,64 @@ function SearchScreen({ onSearch, error }) {
         </div>
       </form>
 
+      <div style={{ marginBottom: '1.25rem' }}>
+        <button
+          type="button"
+          onClick={() => setShowTokenField((v) => !v)}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            fontSize: 12,
+            color: '#5a5a72',
+            cursor: 'pointer',
+            fontFamily: "'Space Mono', monospace",
+            textDecoration: 'underline',
+            textUnderlineOffset: 3,
+          }}
+        >
+          {showTokenField ? '− Hide' : '+ Add'} GitHub token for exact streaks (optional)
+        </button>
+
+        {showTokenField && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{ marginTop: '0.75rem' }}
+          >
+            <div style={{
+              display: 'flex',
+              border: '1.5px solid rgba(255,255,255,0.14)',
+              borderRadius: 14,
+              overflow: 'hidden',
+              background: '#111118',
+            }}>
+              <input
+                type="password"
+                value={tokenValue}
+                onChange={e => setTokenValue(e.target.value)}
+                placeholder="ghp_xxxxxxxxxxxx"
+                style={{
+                  flex: 1,
+                  padding: '0.75rem',
+                  fontSize: 14,
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  color: '#f0f0f8',
+                  fontFamily: "'Space Mono', monospace",
+                }}
+              />
+            </div>
+            <p style={{ fontSize: 11, color: '#5a5a72', marginTop: 6, lineHeight: 1.6, textAlign: 'left' }}>
+              Without a token, streaks and the heatmap are a best-effort estimate limited to your last ~90 days of public activity.
+              A token (no scopes needed for public data, add "read:user" to include private contributions) is sent directly to
+              GitHub's API from your browser and never stored.
+            </p>
+          </motion.div>
+        )}
+      </div>
+
       {error && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
@@ -208,6 +270,8 @@ function SearchScreen({ onSearch, error }) {
             ? "😶 Couldn't find that user. Double-check the spelling."
             : error === 'RATE_LIMIT'
             ? '⏳ GitHub rate limit hit. Wait about a minute and try again.'
+            : error === 'BAD_TOKEN'
+            ? '🔑 That token was rejected by GitHub. Double-check it, or search without one.'
             : '⚠️ Something went wrong. Please try again.'}
         </motion.div>
       )}
@@ -253,18 +317,30 @@ function SearchScreen({ onSearch, error }) {
 }
 
 // Layout utility wrapper for modular dashboard subdivisions
-function Section({ title, children }) {
+function Section({ title, note, children }) {
   return (
     <div style={{ marginBottom: '2.25rem' }}>
       <div style={{
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: '0.1em',
-        textTransform: 'uppercase',
-        color: '#5a5a72',
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 8,
         marginBottom: '1rem',
       }}>
-        {title}
+        <div style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          color: '#5a5a72',
+        }}>
+          {title}
+        </div>
+        {note && (
+          <div style={{ fontSize: 10, color: '#7c6af7' }}>
+            {note}
+          </div>
+        )}
       </div>
       {children}
     </div>
@@ -273,7 +349,7 @@ function Section({ title, children }) {
 
 // Main analytics dashboard presenting consolidated visualization elements
 function ResultsScreen({ data, onReset }) {
-  const { user, stats, languages, topRepos, streaks, personality, heatmap } = data
+  const { user, stats, languages, topRepos, streaks, streaksExact, personality, heatmap, heatmapExact } = data
 
   return (
     <motion.div
@@ -401,7 +477,10 @@ function ResultsScreen({ data, onReset }) {
         <PersonalityCard personality={personality} delay={0.2} />
       </Section>
 
-      <Section title="Commit streaks">
+      <Section
+        title="Commit streaks"
+        note={streaksExact ? '✓ exact, via GitHub login' : '≈ estimate, last ~90 days of public activity'}
+      >
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
@@ -426,7 +505,10 @@ function ResultsScreen({ data, onReset }) {
         </Section>
       )}
 
-      <Section title="Contribution activity — last 52 weeks">
+      <Section
+        title="Contribution activity — last 52 weeks"
+        note={heatmapExact ? '✓ exact, via GitHub login' : '≈ estimate, last ~90 days of public activity'}
+      >
         <div style={{
           background: '#111118',
           border: '1px solid rgba(255,255,255,0.08)',
@@ -460,12 +542,13 @@ export default function App() {
   const [data, setData]   = useState(null)
   const [error, setError] = useState(null)
 
-  async function handleSearch(username) {
+  async function handleSearch(username, token) {
     setPhase('loading')
     setError(null)
 
     try {
-      const raw = await fetchGithubUserData(username)
+      const raw = await fetchGithubUserData(username, token)
+      const hasCalendar = Boolean(raw.contributionCalendar)
 
       const processed = {
         user: {
@@ -475,12 +558,14 @@ export default function App() {
           bio:        raw.userInfo.bio,
           joinedYear: new Date(raw.userInfo.created_at).getFullYear(),
         },
-        stats:       getSummaryStats(raw.userInfo, raw.repos),
-        languages:   getLanguageBreakdown(raw.repos),
-        topRepos:    getTopRepos(raw.repos),
-        streaks:     getCommitStreaks(raw.events),
-        personality: getDeveloperPersonality(raw.events),
-        heatmap:     getHeatmapData(raw.events),
+        stats:        getSummaryStats(raw.userInfo, raw.repos),
+        languages:    getLanguageBreakdown(raw.repos),
+        topRepos:     getTopRepos(raw.repos, raw.userInfo.login),
+        streaks:      hasCalendar ? getCommitStreaksFromCalendar(raw.contributionCalendar) : getCommitStreaks(raw.events),
+        streaksExact: hasCalendar,
+        personality:  getDeveloperPersonality(raw.events),
+        heatmap:      hasCalendar ? getHeatmapFromCalendar(raw.contributionCalendar) : getHeatmapData(raw.events),
+        heatmapExact: hasCalendar,
       }
 
       setData(processed)
