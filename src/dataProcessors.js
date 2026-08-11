@@ -1,3 +1,4 @@
+// dataProcessors.js
 // Core data transformation and metrics computation from raw GitHub API responses.
 
 const CONTRIBUTION_EVENT_TYPES = new Set([
@@ -14,67 +15,8 @@ function isContributionEvent(event) {
   return CONTRIBUTION_EVENT_TYPES.has(event.type)
 }
 
-// 1. Language Breakdown
-export function getLanguageBreakdown(repos) {
-  const languageSizes = {}
-
-  repos.forEach((repo) => {
-    if (!repo.language) return
-
-    const currentSize = languageSizes[repo.language] || 0
-    languageSizes[repo.language] = currentSize + (repo.size || 1)
-  })
-
-  const totalSize = Object.values(languageSizes).reduce(
-    (sum, size) => sum + size,
-    0
-  )
-
-  if (totalSize === 0) return []
-
-  return Object.entries(languageSizes)
-    .map(([name, size]) => ({
-      name,
-      percent: Math.round((size / totalSize) * 100),
-    }))
-    .sort((a, b) => b.percent - a.percent)
-    .slice(0, 6)
-}
-
-// 2. Top Repositories
-export function getTopRepos(repos) {
-  const ownedAndActive = repos.filter((repo) => !repo.fork && !repo.archived)
-  const pool = ownedAndActive.length > 0 ? ownedAndActive : repos
-
-  return [...pool]
-    .sort((a, b) => {
-      const scoreA = a.stargazers_count + a.forks_count
-      const scoreB = b.stargazers_count + b.forks_count
-
-      if (scoreB !== scoreA) return scoreB - scoreA
-      return new Date(b.pushed_at) - new Date(a.pushed_at)
-    })
-    .slice(0, 4)
-    .map((repo) => ({
-      name: repo.name,
-      description: repo.description || '',
-      stars: repo.stargazers_count,
-      forks: repo.forks_count,
-      language: repo.language,
-      url: repo.html_url,
-    }))
-}
-
-// 3. Commit Streaks
-export function getCommitStreaks(events) {
-  const activeDays = new Set()
-
-  events.forEach((event) => {
-    if (!isContributionEvent(event)) return
-    const date = new Date(event.created_at).toISOString().split('T')[0]
-    activeDays.add(date)
-  })
-
+// Shared streak math for a set of "active" calendar-date strings (YYYY-MM-DD)
+function computeStreakStats(activeDays) {
   const sortedDays = [...activeDays].sort()
 
   if (sortedDays.length === 0) {
@@ -110,6 +52,101 @@ export function getCommitStreaks(events) {
     longestStreak,
     totalActiveDays: activeDays.size,
   }
+}
+
+// 1. Language Breakdown
+export function getLanguageBreakdown(repos) {
+  const languageSizes = {}
+
+  repos.forEach((repo) => {
+    if (!repo.language) return
+
+    const currentSize = languageSizes[repo.language] || 0
+    languageSizes[repo.language] = currentSize + (repo.size || 1)
+  })
+
+  const totalSize = Object.values(languageSizes).reduce(
+    (sum, size) => sum + size,
+    0
+  )
+
+  if (totalSize === 0) return []
+
+  return Object.entries(languageSizes)
+    .map(([name, size]) => ({
+      name,
+      percent: Math.round((size / totalSize) * 100),
+    }))
+    .sort((a, b) => b.percent - a.percent)
+    .slice(0, 6)
+}
+
+// 2. Top Repositories
+function substanceScore(repo) {
+  let score = 0
+  if (repo.description) score += 1
+  if (repo.topics?.length) score += 1
+  if (repo.homepage) score += 1
+  score += Math.min(repo.size || 0, 5000) / 1000
+  return score
+}
+
+export function getTopRepos(repos, login) {
+  const isProfileReadme = (repo) =>
+    login && repo.name.toLowerCase() === login.toLowerCase()
+
+  const eligible = repos.filter(
+    (repo) => !repo.fork && !repo.archived && !isProfileReadme(repo)
+  )
+  const pool = eligible.length > 0 ? eligible : repos.filter((repo) => !isProfileReadme(repo))
+
+  return [...pool]
+    .sort((a, b) => {
+      const engagementA = a.stargazers_count + a.forks_count
+      const engagementB = b.stargazers_count + b.forks_count
+      const engagementDiff = engagementB - engagementA
+
+      if (Math.abs(engagementDiff) > 1) return engagementDiff
+
+      const substanceDiff = substanceScore(b) - substanceScore(a)
+      if (substanceDiff !== 0) return substanceDiff
+
+      return new Date(b.pushed_at) - new Date(a.pushed_at)
+    })
+    .slice(0, 4)
+    .map((repo) => ({
+      name: repo.name,
+      description: repo.description || '',
+      stars: repo.stargazers_count,
+      forks: repo.forks_count,
+      language: repo.language,
+      url: repo.html_url,
+    }))
+}
+
+// 3. Commit Streaks — REST events estimate.
+export function getCommitStreaks(events) {
+  const activeDays = new Set()
+
+  events.forEach((event) => {
+    if (!isContributionEvent(event)) return
+    activeDays.add(new Date(event.created_at).toISOString().split('T')[0])
+  })
+
+  return computeStreakStats(activeDays)
+}
+
+// 3b. Commit Streaks — exact, from the authenticated GraphQL contribution calendar.
+export function getCommitStreaksFromCalendar(contributionCalendar) {
+  const activeDays = new Set()
+
+  contributionCalendar.weeks.forEach((week) => {
+    week.contributionDays.forEach((day) => {
+      if (day.contributionCount > 0) activeDays.add(day.date)
+    })
+  })
+
+  return computeStreakStats(activeDays)
 }
 
 // 4. Developer Personality
@@ -185,7 +222,7 @@ export function getDeveloperPersonality(events) {
   }
 }
 
-// 5. Contribution Heatmap Data
+// 5. Contribution Heatmap Data — REST events estimate (see getCommitStreaks note).
 export function getHeatmapData(events) {
   const contributionsByDate = {}
 
@@ -214,6 +251,23 @@ export function getHeatmapData(events) {
       })
     }
     weeks.push(days)
+  }
+
+  return weeks
+}
+
+// 5b. Contribution Heatmap Data — exact, from the authenticated GraphQL calendar.
+export function getHeatmapFromCalendar(contributionCalendar) {
+  const allDays = contributionCalendar.weeks
+    .flatMap((week) => week.contributionDays)
+    .map((day) => ({ date: day.date, count: day.contributionCount }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1))
+
+  const last364Days = allDays.slice(-364)
+
+  const weeks = []
+  for (let i = 0; i < last364Days.length; i += 7) {
+    weeks.push(last364Days.slice(i, i + 7))
   }
 
   return weeks
