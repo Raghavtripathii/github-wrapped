@@ -1,4 +1,3 @@
-// App.jsx - Main Application Controller and Core Layout Pipeline
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -6,6 +5,7 @@ import { fetchGithubUserData } from './github.js'
 import {
   getLanguageBreakdown,
   getTopRepos,
+  getTopReposEstimate,
   getCommitStreaks,
   getCommitStreaksFromCalendar,
   getDeveloperPersonality,
@@ -287,7 +287,7 @@ function Section({ title, note, children }) {
 
 // Main analytics dashboard presenting consolidated visualization elements
 function ResultsScreen({ data, onReset }) {
-  const { user, stats, languages, topRepos, streaks, streaksExact, personality, heatmap, heatmapExact } = data
+  const { user, stats, languages, topRepos, topReposExact, streaks, streaksExact, personality, heatmap, heatmapExact } = data
 
   return (
     <motion.div
@@ -458,7 +458,10 @@ function ResultsScreen({ data, onReset }) {
       </Section>
 
       {topRepos.length > 0 && (
-        <Section title="Top repositories">
+        <Section
+          title="Top repositories"
+          note={topReposExact ? '✓ ranked by real commit counts' : '≈ ranked by stars/forks only'}
+        >
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
@@ -487,6 +490,7 @@ export default function App() {
     try {
       const raw = await fetchGithubUserData(username)
       const hasCalendar = Boolean(raw.contributionCalendar)
+      const hasRepoStats = Boolean(raw.repoStats)
 
       const processed = {
         user: {
@@ -498,7 +502,8 @@ export default function App() {
         },
         stats:        getSummaryStats(raw.userInfo, raw.repos),
         languages:    getLanguageBreakdown(raw.repos),
-        topRepos:     getTopRepos(raw.repos, raw.userInfo.login),
+        topRepos:     hasRepoStats ? getTopRepos(raw.repoStats, raw.userInfo.login) : getTopReposEstimate(raw.repos, raw.userInfo.login),
+        topReposExact: hasRepoStats,
         streaks:      hasCalendar ? getCommitStreaksFromCalendar(raw.contributionCalendar) : getCommitStreaks(raw.events),
         streaksExact: hasCalendar,
         personality:  getDeveloperPersonality(raw.events),
