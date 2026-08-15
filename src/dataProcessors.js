@@ -1,6 +1,3 @@
-// dataProcessors.js
-// Core data transformation and metrics computation from raw GitHub API responses.
-
 const CONTRIBUTION_EVENT_TYPES = new Set([
   'PushEvent',
   'PullRequestEvent',
@@ -15,7 +12,7 @@ function isContributionEvent(event) {
   return CONTRIBUTION_EVENT_TYPES.has(event.type)
 }
 
-// Shared streak math for a set of "active" calendar-date strings (YYYY-MM-DD)
+// Shared streak math — works the same whether the active days came from the
 function computeStreakStats(activeDays) {
   const sortedDays = [...activeDays].sort()
 
@@ -39,8 +36,8 @@ function computeStreakStats(activeDays) {
     }
   }
 
-  // Compare calendar dates, not raw timestamps, so time-of-day doesn't
-  // affect whether the last active day counts as "today or yesterday".
+  // Compare calendar dates, not raw timestamps — otherwise time-of-day can
+  // wrongly break a streak that's actually still alive.
   const todayKey = new Date().toISOString().split('T')[0]
   const lastActiveKey = sortedDays[sortedDays.length - 1]
   const daysSinceLastActive =
@@ -82,49 +79,67 @@ export function getLanguageBreakdown(repos) {
 }
 
 // 2. Top Repositories
-function substanceScore(repo) {
-  let score = 0
-  if (repo.description) score += 1
-  if (repo.topics?.length) score += 1
-  if (repo.homepage) score += 1
-  score += Math.min(repo.size || 0, 5000) / 1000
-  return score
+function isProfileReadmeRepo(repo, login) {
+  return Boolean(login) && repo.name.toLowerCase() === login.toLowerCase()
 }
 
-export function getTopRepos(repos, login) {
-  const isProfileReadme = (repo) =>
-    login && repo.name.toLowerCase() === login.toLowerCase()
+function scoreRepo({ stars, forks, commits, hasDescription }) {
+  const engagement = Math.log2(stars + 1) * 3 + Math.log2(forks + 1) * 2
+  const effort = Math.log2((commits ?? 0) + 1) * 2.5
+  const bonus = hasDescription ? 1 : 0
+  return engagement + effort + bonus
+}
 
-  const eligible = repos.filter(
-    (repo) => !repo.fork && !repo.archived && !isProfileReadme(repo)
-  )
-  const pool = eligible.length > 0 ? eligible : repos.filter((repo) => !isProfileReadme(repo))
-
+function rankTop4(pool, toScoreInput) {
   return [...pool]
     .sort((a, b) => {
-      const engagementA = a.stargazers_count + a.forks_count
-      const engagementB = b.stargazers_count + b.forks_count
-      const engagementDiff = engagementB - engagementA
-
-      if (Math.abs(engagementDiff) > 1) return engagementDiff
-
-      const substanceDiff = substanceScore(b) - substanceScore(a)
-      if (substanceDiff !== 0) return substanceDiff
-
+      const diff = scoreRepo(toScoreInput(b)) - scoreRepo(toScoreInput(a))
+      if (diff !== 0) return diff
       return new Date(b.pushed_at) - new Date(a.pushed_at)
     })
     .slice(0, 4)
-    .map((repo) => ({
-      name: repo.name,
-      description: repo.description || '',
-      stars: repo.stargazers_count,
-      forks: repo.forks_count,
-      language: repo.language,
-      url: repo.html_url,
-    }))
 }
 
-// 3. Commit Streaks — REST events estimate.
+
+export function getTopRepos(repoStats, login) {
+  const eligible = repoStats.filter((r) => !r.fork && !r.archived && !isProfileReadmeRepo(r, login))
+  const pool = eligible.length > 0 ? eligible : repoStats.filter((r) => !isProfileReadmeRepo(r, login))
+
+  return rankTop4(pool, (r) => ({
+    stars: r.stars,
+    forks: r.forks,
+    commits: r.commitCount,
+    hasDescription: Boolean(r.description),
+  })).map((r) => ({
+    name: r.name,
+    description: r.description || '',
+    stars: r.stars,
+    forks: r.forks,
+    language: r.language,
+    url: r.url,
+  }))
+}
+
+export function getTopReposEstimate(repos, login) {
+  const eligible = repos.filter((r) => !r.fork && !r.archived && !isProfileReadmeRepo(r, login))
+  const pool = eligible.length > 0 ? eligible : repos.filter((r) => !isProfileReadmeRepo(r, login))
+
+  return rankTop4(pool, (r) => ({
+    stars: r.stargazers_count,
+    forks: r.forks_count,
+    commits: null,
+    hasDescription: Boolean(r.description),
+  })).map((r) => ({
+    name: r.name,
+    description: r.description || '',
+    stars: r.stargazers_count,
+    forks: r.forks_count,
+    language: r.language,
+    url: r.html_url,
+  }))
+}
+
+// 3. Commit Streaks — best-effort, from the public events feed.
 export function getCommitStreaks(events) {
   const activeDays = new Set()
 
@@ -136,7 +151,7 @@ export function getCommitStreaks(events) {
   return computeStreakStats(activeDays)
 }
 
-// 3b. Commit Streaks — exact, from the authenticated GraphQL contribution calendar.
+// 3b. Commit Streaks — exact, from the authenticated contribution calendar.
 export function getCommitStreaksFromCalendar(contributionCalendar) {
   const activeDays = new Set()
 
@@ -222,7 +237,7 @@ export function getDeveloperPersonality(events) {
   }
 }
 
-// 5. Contribution Heatmap Data — REST events estimate (see getCommitStreaks note).
+// 5. Contribution Heatmap Data — best-effort, same source/limits as getCommitStreaks.
 export function getHeatmapData(events) {
   const contributionsByDate = {}
 
@@ -256,7 +271,8 @@ export function getHeatmapData(events) {
   return weeks
 }
 
-// 5b. Contribution Heatmap Data — exact, from the authenticated GraphQL calendar.
+// 5b. Contribution Heatmap Data — exact, from the authenticated calendar.
+// Reshaped into the same 52-week x 7-day grid the Heatmap component expects.
 export function getHeatmapFromCalendar(contributionCalendar) {
   const allDays = contributionCalendar.weeks
     .flatMap((week) => week.contributionDays)
