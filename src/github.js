@@ -1,5 +1,3 @@
-// github.js
-// Handles communication with the GitHub API to fetch raw user data.
 
 const GITHUB_BASE = 'https://api.github.com'
 
@@ -57,13 +55,25 @@ async function fetchContributionCalendar(username) {
   }
 }
 
-// Main function to concurrently fetch user profile, repositories, recent
+// Gets every owned repo with a real commit count
+async function fetchRepoStats(username) {
+  try {
+    const res = await fetch(`/api/repo-stats?username=${encodeURIComponent(username)}`)
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
+
 export async function fetchGithubUserData(username) {
-  const [userInfo, repos, events, contributionCalendar] = await Promise.all([
+  const [userInfo, repos, events, contributionCalendar, repoStats] = await Promise.all([
     fetchFromGithub(`/users/${username}`),
     fetchAllPages(`/users/${username}/repos`),
     fetchAllPages(`/users/${username}/events`, 3),
     fetchContributionCalendar(username),
+    fetchRepoStats(username),
   ])
 
   return {
@@ -71,5 +81,6 @@ export async function fetchGithubUserData(username) {
     repos,
     events,
     contributionCalendar,
+    repoStats,
   }
 }
