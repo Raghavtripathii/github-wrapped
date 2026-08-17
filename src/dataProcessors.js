@@ -12,7 +12,7 @@ function isContributionEvent(event) {
   return CONTRIBUTION_EVENT_TYPES.has(event.type)
 }
 
-// Shared streak math — works the same whether the active days came from the
+
 function computeStreakStats(activeDays) {
   const sortedDays = [...activeDays].sort()
 
@@ -36,8 +36,6 @@ function computeStreakStats(activeDays) {
     }
   }
 
-  // Compare calendar dates, not raw timestamps — otherwise time-of-day can
-  // wrongly break a streak that's actually still alive.
   const todayKey = new Date().toISOString().split('T')[0]
   const lastActiveKey = sortedDays[sortedDays.length - 1]
   const daysSinceLastActive =
@@ -51,22 +49,17 @@ function computeStreakStats(activeDays) {
   }
 }
 
-// 1. Language Breakdown
-export function getLanguageBreakdown(repos) {
-  const languageSizes = {}
+function isProfileReadmeRepo(repo, login) {
+  return Boolean(login) && repo.name.toLowerCase() === login.toLowerCase()
+}
 
-  repos.forEach((repo) => {
-    if (!repo.language) return
+function eligibleRepos(repos, login) {
+  const owned = repos.filter((r) => !r.fork && !r.archived && !isProfileReadmeRepo(r, login))
+  return owned.length > 0 ? owned : repos.filter((r) => !isProfileReadmeRepo(r, login))
+}
 
-    const currentSize = languageSizes[repo.language] || 0
-    languageSizes[repo.language] = currentSize + (repo.size || 1)
-  })
-
-  const totalSize = Object.values(languageSizes).reduce(
-    (sum, size) => sum + size,
-    0
-  )
-
+function sizesToPercentages(languageSizes) {
+  const totalSize = Object.values(languageSizes).reduce((sum, size) => sum + size, 0)
   if (totalSize === 0) return []
 
   return Object.entries(languageSizes)
@@ -78,11 +71,34 @@ export function getLanguageBreakdown(repos) {
     .slice(0, 6)
 }
 
-// 2. Top Repositories
-function isProfileReadmeRepo(repo, login) {
-  return Boolean(login) && repo.name.toLowerCase() === login.toLowerCase()
+// 1. Language Breakdown
+export function getLanguageBreakdown(repoStats, login) {
+  const pool = eligibleRepos(repoStats, login)
+  const languageSizes = {}
+
+  pool.forEach((repo) => {
+    repo.languages.forEach(({ name, bytes }) => {
+      languageSizes[name] = (languageSizes[name] || 0) + bytes
+    })
+  })
+
+  return sizesToPercentages(languageSizes)
 }
 
+
+export function getLanguageBreakdownEstimate(repos, login) {
+  const pool = eligibleRepos(repos, login)
+  const languageSizes = {}
+
+  pool.forEach((repo) => {
+    if (!repo.language) return
+    languageSizes[repo.language] = (languageSizes[repo.language] || 0) + (repo.size || 1)
+  })
+
+  return sizesToPercentages(languageSizes)
+}
+
+// 2. Top Repositories
 function scoreRepo({ stars, forks, commits, hasDescription }) {
   const engagement = Math.log2(stars + 1) * 3 + Math.log2(forks + 1) * 2
   const effort = Math.log2((commits ?? 0) + 1) * 2.5
@@ -102,8 +118,7 @@ function rankTop4(pool, toScoreInput) {
 
 
 export function getTopRepos(repoStats, login) {
-  const eligible = repoStats.filter((r) => !r.fork && !r.archived && !isProfileReadmeRepo(r, login))
-  const pool = eligible.length > 0 ? eligible : repoStats.filter((r) => !isProfileReadmeRepo(r, login))
+  const pool = eligibleRepos(repoStats, login)
 
   return rankTop4(pool, (r) => ({
     stars: r.stars,
@@ -120,9 +135,9 @@ export function getTopRepos(repoStats, login) {
   }))
 }
 
+
 export function getTopReposEstimate(repos, login) {
-  const eligible = repos.filter((r) => !r.fork && !r.archived && !isProfileReadmeRepo(r, login))
-  const pool = eligible.length > 0 ? eligible : repos.filter((r) => !isProfileReadmeRepo(r, login))
+  const pool = eligibleRepos(repos, login)
 
   return rankTop4(pool, (r) => ({
     stars: r.stargazers_count,
@@ -140,6 +155,9 @@ export function getTopReposEstimate(repos, login) {
 }
 
 // 3. Commit Streaks — best-effort, from the public events feed.
+// GitHub caps this at 300 events / 90 days and public activity only, so on
+// an active account it can undercount. Use the calendar version below when
+// we have a token.
 export function getCommitStreaks(events) {
   const activeDays = new Set()
 
