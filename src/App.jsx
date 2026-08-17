@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { fetchGithubUserData } from './github.js'
 import {
   getLanguageBreakdown,
+  getLanguageBreakdownEstimate,
   getTopRepos,
   getTopReposEstimate,
   getCommitStreaks,
@@ -287,7 +288,7 @@ function Section({ title, note, children }) {
 
 // Main analytics dashboard presenting consolidated visualization elements
 function ResultsScreen({ data, onReset }) {
-  const { user, stats, languages, topRepos, topReposExact, streaks, streaksExact, personality, heatmap, heatmapExact } = data
+  const { user, stats, languages, languagesExact, topRepos, topReposExact, streaks, streaksExact, personality, heatmap, heatmapExact } = data
 
   return (
     <motion.div
@@ -431,7 +432,10 @@ function ResultsScreen({ data, onReset }) {
       </Section>
 
       {languages.length > 0 && (
-        <Section title="Language breakdown">
+        <Section
+          title="Language breakdown"
+          note={languagesExact ? '✓ real per-language byte counts' : '≈ primary language only'}
+        >
           <div style={{
             background: '#111118',
             border: '1px solid rgba(255,255,255,0.08)',
@@ -501,7 +505,8 @@ export default function App() {
           joinedYear: new Date(raw.userInfo.created_at).getFullYear(),
         },
         stats:        getSummaryStats(raw.userInfo, raw.repos),
-        languages:    getLanguageBreakdown(raw.repos),
+        languages:    hasRepoStats ? getLanguageBreakdown(raw.repoStats, raw.userInfo.login) : getLanguageBreakdownEstimate(raw.repos, raw.userInfo.login),
+        languagesExact: hasRepoStats,
         topRepos:     hasRepoStats ? getTopRepos(raw.repoStats, raw.userInfo.login) : getTopReposEstimate(raw.repos, raw.userInfo.login),
         topReposExact: hasRepoStats,
         streaks:      hasCalendar ? getCommitStreaksFromCalendar(raw.contributionCalendar) : getCommitStreaks(raw.events),
