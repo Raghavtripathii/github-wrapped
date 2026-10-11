@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 import { fetchGithubUserData } from './github.js'
+import { downloadReport } from './reportGenerator.js'
 import {
   getLanguageBreakdown,
   getLanguageBreakdownEstimate,
@@ -289,6 +290,18 @@ function Section({ title, note, children }) {
 // Main analytics dashboard presenting consolidated visualization elements
 function ResultsScreen({ data, onReset }) {
   const { user, stats, languages, languagesExact, topRepos, topReposExact, streaks, streaksExact, personality, heatmap, heatmapExact } = data
+  const [downloading, setDownloading] = useState(false)
+
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await downloadReport(data)
+    } catch {
+      alert('Could not generate the report. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   return (
     <motion.div
@@ -327,9 +340,30 @@ function ResultsScreen({ data, onReset }) {
         >
           ← Search again
         </button>
-        <span style={{ fontSize: 12, color: '#5a5a72' }}>
-          GitHub Wrapped
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <button
+            onClick={handleDownload}
+            disabled={downloading}
+            style={{
+              fontSize: 12,
+              color: '#9090a8',
+              padding: '6px 14px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 8,
+              cursor: downloading ? 'wait' : 'pointer',
+              background: 'transparent',
+              fontFamily: "'Syne', sans-serif",
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = '#f0f0f8'}
+            onMouseLeave={e => e.currentTarget.style.color = '#9090a8'}
+          >
+            {downloading ? 'Preparing…' : '↓ Download report'}
+          </button>
+          <span style={{ fontSize: 12, color: '#5a5a72' }}>
+            GitHub Wrapped
+          </span>
+        </div>
       </div>
 
       {/* User profile overview layout */}
