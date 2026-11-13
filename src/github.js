@@ -1,4 +1,3 @@
-
 const GITHUB_BASE = 'https://api.github.com'
 
 async function fetchFromGithub(endpoint) {
@@ -45,27 +44,32 @@ async function fetchAllPages(endpoint, maxPages = 4) {
   return allItems
 }
 
-async function fetchContributionCalendar(username) {
+// Calls one of our own /api routes. Any failure returns null so the app
+// falls back to estimates, but the reason is logged instead of swallowed.
+async function fetchFromProxy(path, username, label) {
   try {
-    const res = await fetch(`/api/contributions?username=${encodeURIComponent(username)}`)
-    if (!res.ok) return null
+    const res = await fetch(`${path}?username=${encodeURIComponent(username)}`)
+
+    if (!res.ok) {
+      const detail = await res.json().then((body) => body?.error).catch(() => null)
+      console.warn(`[exact ${label} unavailable] ${res.status}${detail ? `: ${detail}` : ''}`)
+      return null
+    }
+
     return await res.json()
-  } catch {
+  } catch (err) {
+    console.warn(`[exact ${label} unavailable] ${err.message}`)
     return null
   }
 }
 
-// Gets every owned repo with a real commit count
-async function fetchRepoStats(username) {
-  try {
-    const res = await fetch(`/api/repo-stats?username=${encodeURIComponent(username)}`)
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
-  }
+function fetchContributionCalendar(username) {
+  return fetchFromProxy('/api/contributions', username, 'streaks')
 }
 
+function fetchRepoStats(username) {
+  return fetchFromProxy('/api/repo-stats', username, 'repo stats')
+}
 
 export async function fetchGithubUserData(username) {
   const [userInfo, repos, events, contributionCalendar, repoStats] = await Promise.all([
